@@ -69,8 +69,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ```powershell
 # 1. Clone repository
-git clone https://github.com/YOUR_USERNAME/FastAPI-CommonForms.git
-cd FastAPI-CommonForms
+git clone https://github.com/abdullahdgrey8/commonForms
+cd commonForms
 
 # 2. Create virtual environment
 python -m venv venv
