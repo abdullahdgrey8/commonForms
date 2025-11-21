@@ -9,9 +9,9 @@ python-multipart
 
 # Security & Authentication
 python-jose[cryptography]
-passlib[bcrypt]
+passlib==1.7.4
 cryptography
-bcrypt
+bcrypt==3.2.0
 
 # Settings Management
 pydantic
