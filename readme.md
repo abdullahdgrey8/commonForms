@@ -150,17 +150,6 @@ TEST_USER_USERNAME=admin
 TEST_USER_PASSWORD=changeme123
 ```
 
-### Worker Configuration
-
-**⚠️ Memory Management:**
-
-| Configuration        | Workers | RAM Usage | VRAM Usage | Best For                |
-| -------------------- | ------- | --------- | ---------- | ----------------------- |
-| **Development**      | 1       | ~700MB    | -          | Testing, debugging      |
-| **CPU Production**   | 4-8     | ~2.5GB    | -          | Multi-core CPUs         |
-| **GPU Production**   | 2-3     | ~1.5GB    | 5-6GB      | NVIDIA GPUs (8GB+ VRAM) |
-| **Colab/Low Memory** | 1       | ~700MB    | 2-3GB      | Free tier environments  |
-
 ```bash
 # Development (auto-reload)
 uvicorn app.main:app --reload
