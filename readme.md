@@ -35,8 +35,8 @@ A production-ready REST API service that automatically detects and adds form fie
 
 ```bash
 # Clone repository
-git clone https://github.com/YOUR_USERNAME/FastAPI-CommonForms.git
-cd FastAPI-CommonForms
+git clone https://github.com/abdullahdgrey8/commonForms
+cd commonForms
 
 # Create and activate virtual environment
 python -m venv venv
