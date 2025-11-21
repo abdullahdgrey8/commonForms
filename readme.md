@@ -93,8 +93,8 @@ uvicorn app.main:app --reload
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/YOUR_USERNAME/FastAPI-CommonForms.git
-cd FastAPI-CommonForms
+git clone https://github.com/abdullahdgrey8/commonForms
+cd commonForms
 
 # 2. Create virtual environment
 python3 -m venv venv
@@ -108,13 +108,6 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 # 5. Start server
 uvicorn app.main:app --reload
-```
-
-### Docker Installation (Coming Soon)
-
-```bash
-docker pull your-username/commonforms-api
-docker run -p 8000:8000 your-username/commonforms-api
 ```
 
 ## ⚙️ Configuration
