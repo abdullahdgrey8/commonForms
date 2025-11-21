@@ -1,0 +1,133 @@
+{
+  "config": {
+    "model": "FFDNet-L",
+    "confidence": 0.3,
+    "device": "cuda:0",
+    "timestamp": "2025-11-19T16:44:19.269810"
+  },
+  "results": [
+    {
+      "label": "CLEAN",
+      "directory": "test_pdfs",
+      "count": 8,
+      "total_fields": 639,
+      "avg_fields": 79.88,
+      "files": [
+        {
+          "filename": "sample.pdf",
+          "fields_detected": 176
+        },
+        {
+          "filename": "sample2.pdf",
+          "fields_detected": 117
+        },
+        {
+          "filename": "sample3.pdf",
+          "fields_detected": 11
+        },
+        {
+          "filename": "sample4.pdf",
+          "fields_detected": 145
+        },
+        {
+          "filename": "sample5.pdf",
+          "fields_detected": 75
+        },
+        {
+          "filename": "sample6.pdf",
+          "fields_detected": 92
+        },
+        {
+          "filename": "sample7.pdf",
+          "fields_detected": 23
+        },
+        {
+          "filename": "sample8.pdf",
+          "fields_detected": 0
+        }
+      ]
+    },
+    {
+      "label": "BLURRY",
+      "directory": "blur_pdfs",
+      "count": 8,
+      "total_fields": 410,
+      "avg_fields": 51.25,
+      "files": [
+        {
+          "filename": "sample.pdf",
+          "fields_detected": 8
+        },
+        {
+          "filename": "sample2.pdf",
+          "fields_detected": 120
+        },
+        {
+          "filename": "sample3.pdf",
+          "fields_detected": 12
+        },
+        {
+          "filename": "sample4.pdf",
+          "fields_detected": 117
+        },
+        {
+          "filename": "sample5.pdf",
+          "fields_detected": 79
+        },
+        {
+          "filename": "sample6.pdf",
+          "fields_detected": 52
+        },
+        {
+          "filename": "sample7.pdf",
+          "fields_detected": 22
+        },
+        {
+          "filename": "sample8.pdf",
+          "fields_detected": 0
+        }
+      ]
+    },
+    {
+      "label": "SALT & PEPPER",
+      "directory": "salt_pepper_pdfs",
+      "count": 8,
+      "total_fields": 0,
+      "avg_fields": 0.0,
+      "files": [
+        {
+          "filename": "sample.pdf",
+          "fields_detected": 0
+        },
+        {
+          "filename": "sample2.pdf",
+          "fields_detected": 0
+        },
+        {
+          "filename": "sample3.pdf",
+          "fields_detected": 0
+        },
+        {
+          "filename": "sample4.pdf",
+          "fields_detected": 0
+        },
+        {
+          "filename": "sample5.pdf",
+          "fields_detected": 0
+        },
+        {
+          "filename": "sample6.pdf",
+          "fields_detected": 0
+        },
+        {
+          "filename": "sample7.pdf",
+          "fields_detected": 0
+        },
+        {
+          "filename": "sample8.pdf",
+          "fields_detected": 0
+        }
+      ]
+    }
+  ]
+}
