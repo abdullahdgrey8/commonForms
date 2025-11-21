@@ -8,6 +8,7 @@ from app.api.v1.router import api_router
 from app.services.model_cache import model_cache
 from app.middleware.error_handler import add_error_handlers
 import os
+import torch
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
