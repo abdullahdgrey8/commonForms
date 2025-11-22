@@ -94,7 +94,7 @@ class BatchService:
             if parallel:
                 # --- FIX: Limit concurrency to prevent OOM errors ---
                 # We use a Semaphore to limit active tasks to 3 at a time
-                semaphore = asyncio.Semaphore(3) 
+                semaphore = asyncio.Semaphore(4) 
 
                 async def semaphore_wrapper(pdf):
                     async with semaphore:
