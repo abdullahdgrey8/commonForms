@@ -3,6 +3,7 @@ import os
 import time
 import tempfile
 import shutil
+import asyncio  # <--- Added asyncio
 from pathlib import Path
 from fastapi import UploadFile, HTTPException
 import torch
@@ -65,7 +66,7 @@ class PDFService:
             suffix = ".pdf"
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_in:
                 shutil.copyfileobj(pdf_file.file, tmp_in)
-                tmp_in_path = tmp_in.name
+            tmp_in_path = tmp_in.name
 
             # file size for metrics
             try:
@@ -100,9 +101,11 @@ class PDFService:
             tmp_out_path = tempfile.mktemp(suffix=suffix)
 
             # Call existing CommonForms entrypoint.
-            # commonforms.prepare_form should accept model_or_path param (this matches your repo)
             processing_start = time.time()
-            commonforms.prepare_form(
+            
+            # --- FIX: Run blocking synchronous call in a separate thread ---
+            await asyncio.to_thread(
+                commonforms.prepare_form,
                 tmp_in_path,
                 tmp_out_path,
                 model_or_path=model_id_or_repo,
@@ -113,6 +116,8 @@ class PDFService:
                 fast=params.fast,
                 multiline=params.multiline,
             )
+            # -------------------------------------------------------------
+
             processing_time = time.time() - processing_start
             logger.info(f"[{request_id}] Processing complete in {processing_time:.2f}s")
 

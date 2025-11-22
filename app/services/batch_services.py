@@ -92,11 +92,15 @@ class BatchService:
         try:
             # Process files
             if parallel:
-                # Process all files concurrently
-                tasks = [
-                    self.process_single_file(pdf, params, track_metrics)
-                    for pdf in pdf_files
-                ]
+                # --- FIX: Limit concurrency to prevent OOM errors ---
+                # We use a Semaphore to limit active tasks to 3 at a time
+                semaphore = asyncio.Semaphore(3) 
+
+                async def semaphore_wrapper(pdf):
+                    async with semaphore:
+                        return await self.process_single_file(pdf, params, track_metrics)
+
+                tasks = [semaphore_wrapper(pdf) for pdf in pdf_files]
                 results = await asyncio.gather(*tasks)
             else:
                 # Process files sequentially
