@@ -1,55 +1,21 @@
-# evaluation/gunicorn_benchmarker.py
-"""
-Benchmark Gunicorn performance with different worker configurations
-"""
 import json
 import time
 import subprocess
-import signal
-import requests
+import threading
 import psutil
+import requests
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List
 from dataclasses import dataclass, asdict
 from datetime import datetime
-import threading
 import statistics
+import sys
+import os
 
 @dataclass
-class WorkerConfig:
-    """Gunicorn worker configuration"""
-    workers: int
-    worker_class: str = "uvicorn.workers.UvicornWorker"
-    threads: int = 1
-    timeout: int = 300
-    
-    def to_args(self) -> List[str]:
-        """Convert to gunicorn command arguments"""
-        return [
-            '-w', str(self.workers),
-            '-k', self.worker_class,
-            '--threads', str(self.threads),
-            '--timeout', str(self.timeout),
-            '--bind', '0.0.0.0:8000',
-            '--access-logfile', '-',
-            '--error-logfile', '-'
-        ]
-
-
-@dataclass
-class RequestResult:
-    """Result of a single request"""
-    request_id: int
-    status_code: int
-    response_time: float
-    success: bool
-    error_message: str = None
-
-
-@dataclass
-class LoadTestResult:
-    """Result of a load test"""
-    worker_config: WorkerConfig
+class PerformanceResult:
+    test_config: str
+    num_workers: int
     total_requests: int
     concurrent_requests: int
     successful_requests: int
@@ -62,366 +28,198 @@ class LoadTestResult:
     p99_response_time: float
     requests_per_second: float
     total_duration: float
-    cpu_usage_percent: float
-    memory_usage_mb: float
-
+    cpu_usage_percent: float = 0.0
+    memory_usage_mb: float = 0.0
 
 class GunicornBenchmarker:
-    """Benchmark Gunicorn performance"""
-    
-    def __init__(
-        self,
-        app_module: str = "app.main:app",
-        test_pdf_path: str = None,
-        output_dir: str = "evaluation/gunicorn_results"
-    ):
-        self.app_module = app_module
-        self.test_pdf_path = test_pdf_path
+    def __init__(self, output_dir: str = "evaluation/gunicorn_results"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.process = None
-        self.token = None
+        self.server_process = None
+
+    def start_server(self, workers: int):
+        print(f"\nStarting Gunicorn with {workers} worker(s)...")
         
-    def start_gunicorn(self, config: WorkerConfig) -> bool:
-        """Start Gunicorn server with specified configuration"""
-        cmd = ['gunicorn'] + config.to_args() + [self.app_module]
+        # Set environment variables for the subprocess
+        env = os.environ.copy()
+        env["HF_HUB_OFFLINE"] = "1"
+        env["ULTRALYTICS_HUB"] = "off"
         
-        print(f"\nStarting Gunicorn with {config.workers} workers...")
-        print(f"Command: {' '.join(cmd)}")
+        # GUNICORN COMMAND
+        # -k uvicorn.workers.UvicornWorker : Tells Gunicorn to use Uvicorn for ASGI
+        # --bind : Specifies the host and port
+        # --chdir : Ensures we are running from the correct directory context if needed
+        cmd = [
+            "gunicorn", 
+            "app.main:app",
+            "-k", "uvicorn.workers.UvicornWorker", 
+            "--bind", "0.0.0.0:8000",
+            "--workers", str(workers),
+            "--log-level", "critical", # Keep it quiet
+            "--timeout", "120" # Increase timeout for slow heavy loads
+        ]
         
-        try:
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            # Wait for server to start
-            max_wait = 30
-            start_time = time.time()
-            while time.time() - start_time < max_wait:
-                try:
-                    response = requests.get('http://localhost:8000/api/v1/health', timeout=1)
-                    if response.status_code == 200:
-                        print("✓ Server started successfully")
-                        return True
-                except requests.exceptions.RequestException:
-                    time.sleep(1)
-            
-            print("✗ Server failed to start within timeout")
-            self.stop_gunicorn()
-            return False
-            
-        except Exception as e:
-            print(f"✗ Error starting server: {e}")
-            return False
-    
-    def stop_gunicorn(self):
-        """Stop Gunicorn server"""
-        if self.process:
-            print("Stopping Gunicorn...")
-            self.process.send_signal(signal.SIGTERM)
+        # Start the process
+        self.server_process = subprocess.Popen(cmd, env=env)
+        
+        # Wait for server to be ready
+        print("Waiting for Gunicorn to boot...")
+        for _ in range(45): # Gunicorn might take a split second longer to fork workers
             try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-            self.process = None
-    
-    def get_auth_token(self, username: str = "admin", password: str = "changeme123") -> str:
-        """Get authentication token"""
+                r = requests.get("http://localhost:8000/api/v1/health", timeout=2)
+                if r.status_code == 200:
+                    print("Server ready!")
+                    time.sleep(3)  # Give workers a moment to fully initialize
+                    return True
+            except:
+                time.sleep(1)
+        
+        print("Server failed to start!")
+        self.stop_server()
+        return False
+
+    def stop_server(self):
+        if self.server_process:
+            print("Stopping Gunicorn...")
+            # Gunicorn handles SIGTERM by gracefully shutting down workers
+            self.server_process.terminate()
+            try:
+                self.server_process.wait(timeout=5)
+            except:
+                self.server_process.kill()
+            self.server_process = None
+            time.sleep(2) # Allow OS to reclaim port 8000
+
+    def get_token(self) -> str:
+        # Retry logic for login
+        for _ in range(5):
+            try:
+                r = requests.post("http://localhost:8000/api/v1/auth/login",
+                                json={"username": "admin", "password": "changeme123"}, timeout=5)
+                if r.status_code == 200:
+                    return r.json()["access_token"]
+            except:
+                time.sleep(1)
+        raise Exception("Could not login to get token")
+
+    def send_request(self, pdf_path: str, token: str) -> float:
+        start = time.time()
         try:
-            response = requests.post(
-                'http://localhost:8000/api/v1/auth/login',
-                json={'username': username, 'password': password}
-            )
-            if response.status_code == 200:
-                return response.json()['access_token']
-            else:
-                raise Exception(f"Login failed: {response.status_code}")
+            with open(pdf_path, "rb") as f:
+                files = {"pdf": f}
+                # Explicitly requesting GPU (cuda:0)
+                data = {"model": "FFDNet-L", "confidence": "0.3", "device": "cuda:0"}
+                headers = {"Authorization": f"Bearer {token}"}
+                r = requests.post("http://localhost:8000/api/v1/pdf/make-fillable",
+                                  files=files, data=data, headers=headers, timeout=300)
+            return time.time() - start if r.status_code == 200 else -1
         except Exception as e:
-            print(f"✗ Failed to get token: {e}")
-            return None
-    
-    def send_request(self, request_id: int, pdf_path: str, token: str) -> RequestResult:
-        """Send a single request to the API"""
-        start_time = time.time()
-        
+            return -1
+
+    def run_test(self, workers: int, pdf_path: str, requests_count: int = 50, concurrent: int = 10) -> PerformanceResult:
+        if not self.start_server(workers):
+            raise Exception("Server failed")
+
         try:
-            with open(pdf_path, 'rb') as f:
-                files = {'pdf': f}
-                data = {'model': 'FFDNet-L', 'confidence': 0.3}
-                headers = {'Authorization': f'Bearer {token}'}
-                
-                response = requests.post(
-                    'http://localhost:8000/api/v1/pdf/make-fillable',
-                    files=files,
-                    data=data,
-                    headers=headers,
-                    timeout=300
-                )
-            
-            response_time = time.time() - start_time
-            
-            return RequestResult(
-                request_id=request_id,
-                status_code=response.status_code,
-                response_time=response_time,
-                success=response.status_code == 200
-            )
-            
-        except Exception as e:
-            response_time = time.time() - start_time
-            return RequestResult(
-                request_id=request_id,
-                status_code=0,
-                response_time=response_time,
-                success=False,
-                error_message=str(e)
-            )
-    
-    def run_load_test(
-        self,
-        pdf_path: str,
-        num_requests: int,
-        concurrent: int,
-        token: str
-    ) -> List[RequestResult]:
-        """Run load test with specified concurrency"""
-        print(f"\nRunning load test: {num_requests} requests, {concurrent} concurrent")
-        
-        results = []
-        completed = 0
-        
-        def worker(request_ids: List[int]):
-            nonlocal completed
-            for req_id in request_ids:
-                result = self.send_request(req_id, pdf_path, token)
-                results.append(result)
-                completed += 1
-                if completed % 10 == 0:
-                    print(f"  Progress: {completed}/{num_requests}")
-        
-        # Split requests among threads
-        request_ids = list(range(num_requests))
-        chunk_size = (num_requests + concurrent - 1) // concurrent
-        chunks = [request_ids[i:i+chunk_size] for i in range(0, num_requests, chunk_size)]
-        
-        # Start concurrent threads
-        threads = []
-        for chunk in chunks:
-            thread = threading.Thread(target=worker, args=(chunk,))
-            threads.append(thread)
-            thread.start()
-        
-        # Wait for all threads
-        for thread in threads:
-            thread.join()
-        
-        return results
-    
-    def measure_system_resources(self, duration: float = 5.0) -> Tuple[float, float]:
-        """Measure average CPU and memory usage"""
-        if not self.process:
-            return 0.0, 0.0
-        
-        try:
-            parent = psutil.Process(self.process.pid)
-            children = parent.children(recursive=True)
-            processes = [parent] + children
-            
-            cpu_samples = []
-            mem_samples = []
+            token = self.get_token()
+            results = []
+            lock = threading.Lock()
+            requests_done = 0
+
+            def worker():
+                nonlocal requests_done
+                while True:
+                    with lock:
+                        if len(results) >= requests_count:
+                            break
+                    
+                    rt = self.send_request(pdf_path, token)
+                    
+                    with lock:
+                        if len(results) < requests_count:
+                            results.append(rt)
+                            requests_done += 1
+                            if requests_done % 5 == 0:
+                                print(f"  Progress: {requests_done}/{requests_count}", end='\r')
+
+            threads = [threading.Thread(target=worker) for _ in range(concurrent)]
+            for t in threads: t.start()
             
             start_time = time.time()
-            while time.time() - start_time < duration:
-                total_cpu = sum(p.cpu_percent() for p in processes if p.is_running())
-                total_mem = sum(p.memory_info().rss for p in processes if p.is_running())
-                
-                cpu_samples.append(total_cpu)
-                mem_samples.append(total_mem / (1024 * 1024))  # MB
-                
-                time.sleep(0.5)
-            
-            avg_cpu = statistics.mean(cpu_samples) if cpu_samples else 0
-            avg_mem = statistics.mean(mem_samples) if mem_samples else 0
-            
-            return avg_cpu, avg_mem
-            
-        except Exception as e:
-            print(f"Warning: Could not measure system resources: {e}")
-            return 0.0, 0.0
-    
-    def benchmark_configuration(
-        self,
-        config: WorkerConfig,
-        num_requests: int,
-        concurrent: int,
-        pdf_path: str
-    ) -> LoadTestResult:
-        """Benchmark a single worker configuration"""
-        print(f"\n{'='*60}")
-        print(f"Benchmarking: {config.workers} workers, {config.threads} threads")
-        print(f"{'='*60}")
-        
-        # Start server
-        if not self.start_gunicorn(config):
-            raise Exception("Failed to start Gunicorn")
-        
-        try:
-            # Get auth token
-            token = self.get_auth_token()
-            if not token:
-                raise Exception("Failed to get authentication token")
-            
-            # Warm up
-            print("Warming up...")
-            self.send_request(0, pdf_path, token)
-            time.sleep(2)
-            
-            # Measure baseline resources
-            print("Measuring baseline resources...")
-            baseline_cpu, baseline_mem = self.measure_system_resources(duration=3)
-            
-            # Run load test
-            start_time = time.time()
-            results = self.run_load_test(pdf_path, num_requests, concurrent, token)
-            total_duration = time.time() - start_time
-            
-            # Measure resources during load
-            print("Measuring resources under load...")
-            load_cpu, load_mem = self.measure_system_resources(duration=5)
-            
-            # Calculate statistics
-            successful = [r for r in results if r.success]
-            failed = [r for r in results if not r.success]
-            
-            if not successful:
-                raise Exception("All requests failed")
-            
-            response_times = [r.response_time for r in successful]
-            response_times.sort()
-            
-            avg_time = statistics.mean(response_times)
-            median_time = statistics.median(response_times)
-            p95_time = response_times[int(len(response_times) * 0.95)]
-            p99_time = response_times[int(len(response_times) * 0.99)]
-            
-            rps = num_requests / total_duration
-            
-            result = LoadTestResult(
-                worker_config=config,
-                total_requests=num_requests,
+            for t in threads: t.join()
+            duration = time.time() - start_time
+            print() 
+
+            successful = [r for r in results if r > 0]
+            times = sorted(successful)
+            rps = len(successful) / duration if duration > 0 else 0
+
+            # Resource Monitoring (captures Gunicorn Master + All Workers)
+            proc = psutil.Process(self.server_process.pid)
+            try:
+                children = proc.children(recursive=True)
+                all_procs = [proc] + children
+                cpu = sum([p.cpu_percent(interval=0.1) for p in all_procs])
+                mem = sum([p.memory_info().rss for p in all_procs]) / (1024 * 1024)
+            except:
+                cpu, mem = 0.0, 0.0
+
+            return PerformanceResult(
+                test_config=f"{workers}_workers_gunicorn",
+                num_workers=workers,
+                total_requests=requests_count,
                 concurrent_requests=concurrent,
                 successful_requests=len(successful),
-                failed_requests=len(failed),
-                avg_response_time=round(avg_time, 3),
-                min_response_time=round(min(response_times), 3),
-                max_response_time=round(max(response_times), 3),
-                median_response_time=round(median_time, 3),
-                p95_response_time=round(p95_time, 3),
-                p99_response_time=round(p99_time, 3),
+                failed_requests=requests_count - len(successful),
+                avg_response_time=round(statistics.mean(times), 3) if times else 0,
+                min_response_time=round(min(times), 3) if times else 0,
+                max_response_time=round(max(times), 3) if times else 0,
+                median_response_time=round(statistics.median(times), 3) if times else 0,
+                p95_response_time=round(times[int(len(times)*0.95)], 3) if times else 0,
+                p99_response_time=round(times[int(len(times)*0.99)], 3) if times else 0,
                 requests_per_second=round(rps, 2),
-                total_duration=round(total_duration, 2),
-                cpu_usage_percent=round(load_cpu, 1),
-                memory_usage_mb=round(load_mem, 1)
+                total_duration=round(duration, 2),
+                cpu_usage_percent=cpu,
+                memory_usage_mb=mem
             )
-            
-            print(f"\n✓ Benchmark complete:")
-            print(f"  Successful: {len(successful)}/{num_requests}")
-            print(f"  Avg response time: {avg_time:.2f}s")
-            print(f"  Median: {median_time:.2f}s, P95: {p95_time:.2f}s")
-            print(f"  Throughput: {rps:.2f} req/s")
-            print(f"  CPU: {load_cpu:.1f}%, Memory: {load_mem:.1f} MB")
-            
-            return result
-            
         finally:
-            self.stop_gunicorn()
-            time.sleep(3)  # Wait between tests
-    
-    def run_worker_comparison(
-        self,
-        worker_counts: List[int],
-        num_requests: int = 50,
-        concurrent: int = 10,
-        pdf_path: str = None
-    ) -> List[LoadTestResult]:
-        """Compare performance across different worker counts"""
-        if pdf_path is None:
-            pdf_path = self.test_pdf_path
-        
-        if not pdf_path or not Path(pdf_path).exists():
-            raise Exception("Test PDF path not provided or doesn't exist")
-        
-        results = []
-        
-        for worker_count in worker_counts:
-            config = WorkerConfig(workers=worker_count)
-            try:
-                result = self.benchmark_configuration(
-                    config, num_requests, concurrent, pdf_path
-                )
-                results.append(result)
-            except Exception as e:
-                print(f"✗ Benchmark failed for {worker_count} workers: {e}")
-        
-        return results
-    
-    def save_results(self, results: List[LoadTestResult], output_file: str = None):
-        """Save benchmark results"""
-        if output_file is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = self.output_dir / f"gunicorn_benchmark_{timestamp}.json"
-        else:
-            output_file = Path(output_file)
-        
-        data = {
-            'benchmark_timestamp': datetime.now().isoformat(),
-            'results': []
-        }
-        
-        for result in results:
-            result_dict = asdict(result)
-            result_dict['worker_config'] = asdict(result.worker_config)
-            data['results'].append(result_dict)
-        
-        with open(output_file, 'w') as f:
-            json.dump(data, f, indent=2)
-        
-        print(f"\n{'='*60}")
-        print(f"BENCHMARK SUMMARY")
-        print(f"{'='*60}")
-        print(f"{'Workers':<10} {'RPS':<10} {'Avg Time':<12} {'P95 Time':<12} {'CPU %':<10} {'Memory MB':<12}")
-        print(f"{'-'*60}")
-        
-        for result in results:
-            print(
-                f"{result.worker_config.workers:<10} "
-                f"{result.requests_per_second:<10.2f} "
-                f"{result.avg_response_time:<12.2f} "
-                f"{result.p95_response_time:<12.2f} "
-                f"{result.cpu_usage_percent:<10.1f} "
-                f"{result.memory_usage_mb:<12.1f}"
-            )
-        
-        print(f"\nResults saved to: {output_file}")
-        print(f"{'='*60}\n")
+            self.stop_server()
 
+    def run_all(self, worker_list=[1,2,4,8], pdf="evaluation/test_pdfs/sample.pdf", requests=50, concurrent=10):
+        all_results = []
+        print(f"Starting Gunicorn Benchmark on PDF: {pdf}")
+        
+        for w in worker_list:
+            print(f"\n{'='*60}")
+            print(f" TESTING GUNICORN WITH {w} WORKER(S)")
+            print(f"{'='*60}")
+            try:
+                result = self.run_test(w, pdf, requests, concurrent)
+                all_results.append(result)
+                print(f" → {result.requests_per_second} req/s | Avg: {result.avg_response_time}s | P95: {result.p95_response_time}s")
+            except Exception as e:
+                print(f"Test failed for {w} workers: {e}")
+                self.stop_server()
+                
+        self.save_results(all_results)
+
+    def save_results(self, results):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = self.output_dir / f"gunicorn_performance_{timestamp}.json"
+        results_dict = [asdict(r) for r in results]
+        
+        with open(path, "w") as f:
+            json.dump({"results": results_dict}, f, indent=2)
+        print(f"\nResults saved: {path}")
 
 if __name__ == "__main__":
-    benchmarker = GunicornBenchmarker(
-        app_module="app.main:app",
-        test_pdf_path="test.pdf"
-    )
-    
-    # Test different worker counts
-    worker_counts = [1, 2, 4, 8]
-    
-    results = benchmarker.run_worker_comparison(
-        worker_counts=worker_counts,
-        num_requests=50,
-        concurrent=10
-    )
-    
-    benchmarker.save_results(results)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pdf", default="evaluation/test_pdfs/sample.pdf")
+    parser.add_argument("--requests", type=int, default=50)
+    parser.add_argument("--concurrent", type=int, default=10)
+    parser.add_argument("--workers", nargs="+", type=int, default=[1,2,4,8])
+    args = parser.parse_args()
+
+    tester = GunicornBenchmarker()
+    tester.run_all(args.workers, args.pdf, args.requests, args.concurrent)
