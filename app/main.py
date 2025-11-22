@@ -10,6 +10,27 @@ from app.middleware.error_handler import add_error_handlers
 import os
 import torch
 
+# 1. Silence pypdfium2 garbage collection AssertionError (super common, 100% safe)
+warnings.filterwarnings("ignore", category=UserWarning, module="pypdfium2")
+logging.getLogger("pypdfium2").setLevel(logging.CRITICAL)
+
+# 2. Silence Ultralytics/YOLO NMS time limit warnings on dense PDFs
+logging.getLogger("ultralytics").setLevel(logging.CRITICAL)
+os.environ["YOLO_NMS_TIME_LIMIT"] = "30.0"  # Give it plenty of breathing room
+
+# 3. Silence PyTorch + CUDA harmless warnings (memory, deprecation, etc.)
+logging.getLogger("torch").setLevel(logging.CRITICAL)
+os.environ["TORCH_LOGS"] = "none"  # PyTorch 2.4+ feature
+
+# 4. Optional: Silence other common noisy libs (if you use them)
+logging.getLogger("PIL").setLevel(logging.WARNING)        # Pillow warnings
+logging.getLogger("passlib").setLevel(logging.WARNING)   # Password hashing
+logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+# 5. Expandable segments = better CUDA memory reuse (helps avoid OOM on edge cases)
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger = get_logger(__name__)
