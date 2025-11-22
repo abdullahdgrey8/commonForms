@@ -42,6 +42,7 @@ class GunicornBenchmarker:
         print(f"\nStarting Gunicorn with {workers} worker(s)...")
         
         env = os.environ.copy()
+        # Essential environment variables for commonforms
         env["HF_HUB_OFFLINE"] = "1"
         env["ULTRALYTICS_HUB"] = "off"
         
@@ -63,7 +64,7 @@ class GunicornBenchmarker:
                 r = requests.get("http://localhost:8000/api/v1/health", timeout=2)
                 if r.status_code == 200:
                     print("Server ready!")
-                    time.sleep(3)
+                    time.sleep(3) # Give it a moment to fully stabilize
                     return True
             except:
                 time.sleep(1)
@@ -98,6 +99,7 @@ class GunicornBenchmarker:
         start = time.time()
         try:
             with open(pdf_path, "rb") as f:
+                # Use hardcoded parameters for consistent benchmarking
                 files = {"pdf": f}
                 data = {"model": "FFDNet-L", "confidence": "0.3", "device": "cuda:0"}
                 headers = {"Authorization": f"Bearer {token}"}
@@ -105,6 +107,7 @@ class GunicornBenchmarker:
                                   files=files, data=data, headers=headers, timeout=300)
             return time.time() - start if r.status_code == 200 else -1
         except Exception as e:
+            # print(f"Request failed: {e}") # Suppressing error print for clean benchmark output
             return -1
 
     def run_test(self, workers: int, pdf_path: str, requests_count: int = 50, concurrent: int = 10) -> PerformanceResult:
@@ -123,12 +126,13 @@ class GunicornBenchmarker:
                     with lock:
                         if len(results) >= requests_count:
                             break
+                    # Send the request and measure time
                     rt = self.send_request(pdf_path, token)
                     with lock:
                         if len(results) < requests_count:
                             results.append(rt)
                             requests_done += 1
-                            if requests_done % 5 == 0:
+                            if requests_done % 5 == 0 or requests_done == requests_count:
                                 print(f"  Progress: {requests_done}/{requests_count}", end='\r')
 
             threads = [threading.Thread(target=worker) for _ in range(concurrent)]
@@ -137,13 +141,14 @@ class GunicornBenchmarker:
             start_time = time.time()
             for t in threads: t.join()
             duration = time.time() - start_time
-            print() 
+            print() # Newline after progress
 
             successful = [r for r in results if r > 0]
             times = sorted(successful)
             rps = len(successful) / duration if duration > 0 else 0
 
             # Resource Monitoring
+            cpu, mem = 0.0, 0.0
             try:
                 proc = psutil.Process(self.server_process.pid)
                 children = proc.children(recursive=True)
@@ -151,7 +156,11 @@ class GunicornBenchmarker:
                 cpu = sum([p.cpu_percent(interval=None) for p in all_procs])
                 mem = sum([p.memory_info().rss for p in all_procs]) / (1024 * 1024)
             except:
-                cpu, mem = 0.0, 0.0
+                pass # Continue with 0.0 if unable to get process info
+
+            # Percentile calculation check
+            p95_time = round(times[int(len(times)*0.95)], 3) if times else 0
+            p99_time = round(times[int(len(times)*0.99)], 3) if times else 0
 
             return PerformanceResult(
                 test_config=f"{workers}_workers_gunicorn",
@@ -164,22 +173,25 @@ class GunicornBenchmarker:
                 min_response_time=round(min(times), 3) if times else 0,
                 max_response_time=round(max(times), 3) if times else 0,
                 median_response_time=round(statistics.median(times), 3) if times else 0,
-                p95_response_time=round(times[int(len(times)*0.95)], 3) if times else 0,
-                p99_response_time=round(times[int(len(times)*0.99)], 3) if times else 0,
+                p95_response_time=p95_time,
+                p99_response_time=p99_time,
                 requests_per_second=round(rps, 2),
                 total_duration=round(duration, 2),
-                cpu_usage_percent=cpu,
-                memory_usage_mb=mem
+                cpu_usage_percent=round(cpu, 1),
+                memory_usage_mb=round(mem, 1)
             )
         finally:
             self.stop_server()
 
-    # Renamed to run_worker_comparison to match your expectations, 
-    # but it works as a self-contained runner.
     def run_worker_comparison(self, worker_counts, pdf_path, num_requests, concurrent):
         all_results = []
-        if not pdf_path or not Path(pdf_path).exists():
-             raise Exception(f"Test PDF path not provided or doesn't exist: {pdf_path}")
+        pdf_file = Path(pdf_path)
+        if not pdf_path or not pdf_file.exists():
+             raise Exception(f"Test PDF path not provided or doesn't exist: {pdf_path}") # The corrected path check
+        
+        # Check if we are in the correct directory (project root)
+        if 'evaluation' in pdf_file.parts and Path('evaluation').resolve().name != 'evaluation':
+            print("❗ Warning: Path seems to be relative but execution directory might be wrong. Assuming current directory.")
 
         print(f"Starting Gunicorn Benchmark on PDF: {pdf_path}")
         
@@ -215,4 +227,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     tester = GunicornBenchmarker()
+    # The arguments are now correctly retrieved from the command line
     tester.run_worker_comparison(args.workers, args.pdf, args.requests, args.concurrent)
